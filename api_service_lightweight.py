@@ -7,8 +7,10 @@ import os
 import sys
 import shutil
 import aiohttp
+import threading
+import time
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
@@ -31,8 +33,14 @@ app = FastAPI(title="MSST Audio Processing API - Lightweight")
 INPUT_DIR = "input"
 RESULTS_DIR = "results"
 TEMP_DIR = "temp"
+LOGS_DIR = "logs"
 os.makedirs(INPUT_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+# 日志清理配置
+LOG_RETENTION_DAYS = 7  # 保留7天的日志
+LOG_CLEANUP_INTERVAL = 3600  # 每小时检查一次（秒）
 
 
 class ProcessRequest(BaseModel):
@@ -284,7 +292,56 @@ async def root():
     }
 
 
+def cleanup_old_logs():
+    """清理超过指定天数的旧日志文件"""
+    try:
+        if not os.path.exists(LOGS_DIR):
+            return
+
+        now = datetime.now()
+        cutoff_time = now - timedelta(days=LOG_RETENTION_DAYS)
+        deleted_count = 0
+
+        for filename in os.listdir(LOGS_DIR):
+            filepath = os.path.join(LOGS_DIR, filename)
+
+            # 只处理文件，不处理目录
+            if os.path.isfile(filepath):
+                file_mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
+
+                # 如果文件修改时间超过保留天数，则删除
+                if file_mtime < cutoff_time:
+                    try:
+                        os.remove(filepath)
+                        deleted_count += 1
+                        logger.info(f"已删除旧日志文件: {filename} (修改时间: {file_mtime})")
+                    except Exception as e:
+                        logger.error(f"删除日志文件失败 {filename}: {e}")
+
+        if deleted_count > 0:
+            logger.info(f"日志清理完成，共删除 {deleted_count} 个文件")
+
+    except Exception as e:
+        logger.error(f"日志清理任务执行失败: {e}")
+
+
+def periodic_log_cleanup():
+    """定期执行日志清理任务"""
+    while True:
+        try:
+            time.sleep(LOG_CLEANUP_INTERVAL)
+            cleanup_old_logs()
+        except Exception as e:
+            logger.error(f"日志清理定时任务出错: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
+
+    # 启动日志清理后台线程
+    cleanup_thread = threading.Thread(target=periodic_log_cleanup, daemon=True)
+    cleanup_thread.start()
+    logger.info(f"日志清理定时任务已启动（保留 {LOG_RETENTION_DAYS} 天，每 {LOG_CLEANUP_INTERVAL} 秒检查一次）")
+
     # 启动API服务
     uvicorn.run(app, host="0.0.0.0", port=8000)
