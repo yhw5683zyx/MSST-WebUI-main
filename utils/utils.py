@@ -84,8 +84,11 @@ def get_model_from_config(model_type, config_path):
 	return model, config
 
 
-def demix(config, model, mix: NDArray, device, model_type: str = None, callback=None) -> Dict[str, NDArray]:
+def demix(config, model, mix: NDArray, device, pbar=False, model_type: str = None, callback=None) -> Dict[str, NDArray]:
 	mix = torch.tensor(mix, dtype=torch.float32)
+	# 如果 callback 不为 None，自动启用进度条（用于本地调试）
+	if callback is not None:
+		pbar = True
 
 	C = config.audio.chunk_size if model_type != "htdemucs" else config.training.samplerate * config.training.segment
 	N = config.inference.num_overlap
@@ -139,7 +142,7 @@ def demix(config, model, mix: NDArray, device, model_type: str = None, callback=
 			i = 0
 			batch_data = []
 			batch_locations = []
-			progress_bar = tqdm(total=mix.shape[1], desc="Processing audio chunks", leave=False)
+			progress_bar = tqdm(total=mix.shape[1], desc="Processing audio chunks", leave=False) if pbar else None
 
 			while i < mix.shape[1]:
 				part = mix[:, i : i + C].to(device)
@@ -181,12 +184,14 @@ def demix(config, model, mix: NDArray, device, model_type: str = None, callback=
 					batch_data = []
 					batch_locations = []
 
-				progress_bar.update(step)
+				if progress_bar:
+					progress_bar.update(step)
 
 				if callback:
 					callback["progress"] = min(0.99 * (i / mix.shape[1]), 0.99)  # the rest 1% is for the postprocess
 
-			progress_bar.close()
+			if progress_bar:
+				progress_bar.close()
 
 			estimated_sources = result / counter
 			estimated_sources = estimated_sources.cpu().numpy()
