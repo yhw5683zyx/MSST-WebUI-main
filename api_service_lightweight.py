@@ -105,7 +105,10 @@ async def upload_to_url(local_path: str, upload_url: str) -> bool:
             'Content-Length': str(file_size)
         }
 
-        async with aiohttp.ClientSession() as session:
+        # 设置超时时间：连接超时30秒，上传超时300秒（5分钟）
+        timeout = aiohttp.ClientTimeout(total=300, connect=30)
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.put(upload_url, data=file_data, headers=headers) as response:
                 response_text = await response.text()
                 logger.debug(f"响应状态: {response.status}, 响应内容: {response_text[:200]}")
@@ -214,10 +217,13 @@ async def run_inference_task(task_id: str, preset_name: str,
                     if response.status == 200:
                         logger.info(f"回调成功")
                     else:
-                        logger.error(f"回调失败, HTTP状态码: {response.status}")
+                        response_text = await response.text()
+                        logger.error(f"回调失败, HTTP状态码: {response.status}, 响应: {response_text}")
 
         except Exception as cb_e:
+            import traceback
             logger.error(f"任务 {task_id}: 回调失败: {str(cb_e)}")
+            logger.error(f"回调异常详情: {traceback.format_exc()}")
 
     # 清理本地临时文件
     shutil.rmtree(task_input_dir, ignore_errors=True)
