@@ -50,6 +50,7 @@ class ProcessRequest(BaseModel):
     task_id: str
     preset_name: str
     download_url: str  # 音立方生成的下载URL (预签名)
+    download_key: str  # 音立方生成的下载KEY
     upload_urls: dict  # 音立方生成的上传URL (预签名), key: 文件名, value: URL
     callback_url: Optional[str] = None
 
@@ -167,8 +168,8 @@ async def upload_to_url(local_path: str, upload_url: str) -> bool:
 
 
 async def run_inference_task(task_id: str, preset_name: str,
-                             download_url: str, upload_urls: dict,
-                             callback_url: Optional[str]):
+                             download_url: str, download_key: str,
+                             upload_urls: dict, callback_url: Optional[str]):
     """后台推理任务: 通过预签名URL下载 -> 执行分离 -> 上传到预签名URL -> 回调通知"""
     task_input_dir = os.path.join(INPUT_DIR, task_id)
     task_output_dir = os.path.join(RESULTS_DIR, task_id)
@@ -247,6 +248,7 @@ async def run_inference_task(task_id: str, preset_name: str,
                 "task_id": task_id,
                 "status": status,
                 "uploaded_files": uploaded_files,
+                "download_key": download_key,
                 "message": message
             }
             logger.info(f"任务 {task_id}: 发送回调到 {callback_url}")
@@ -287,6 +289,7 @@ async def process_audio(request: ProcessRequest, background_tasks: BackgroundTas
         request.task_id,
         request.preset_name,
         request.download_url,
+        request.download_key,
         request.upload_urls,
         request.callback_url
     )
