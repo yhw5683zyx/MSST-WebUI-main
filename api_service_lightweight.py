@@ -7,8 +7,10 @@ import os
 import sys
 import shutil
 import aiohttp
+import asyncio
 import threading
 import time
+import traceback
 from typing import Optional
 from datetime import datetime, timedelta
 from fastapi import FastAPI, BackgroundTasks, HTTPException
@@ -59,8 +61,12 @@ class ProcessResponse(BaseModel):
     message: str
 
 
-async def download_from_url(url: str, local_path: str) -> bool:
-    """通过预签名URL下载文件 (无需SDK)"""
+async def download_from_url(url: str, local_path: str) -> str:
+    """通过预签名URL下载文件 (无需SDK)
+
+    Returns:
+        成功返回空字符串，失败返回错误信息
+    """
     try:
         logger.info(f"从URL下载: {url} -> {local_path}")
 
@@ -71,13 +77,48 @@ async def download_from_url(url: str, local_path: str) -> bool:
                     with open(local_path, 'wb') as f:
                         f.write(content)
                     logger.info(f"下载成功: {local_path}")
-                    return True
+                    return ""
                 else:
-                    logger.error(f"下载失败, HTTP状态码: {response.status}")
-                    return False
+                    response_text = await response.text()
+                    error_msg = f"HTTP状态码: {response.status}, 响应内容: {response_text[:500]}"
+                    logger.error(f"下载失败, {error_msg}")
+                    return error_msg
     except Exception as e:
-        logger.error(f"下载失败: {e}")
-        return False
+        error_msg = f"下载异常: {e}"
+        logger.error(f"{error_msg}")
+        logger.error(f"下载异常详情: {traceback.format_exc()}")
+        return error_msg
+
+
+async def download_from_url_with_retry(url: str, local_path: str, retry_intervals: list = [1, 3, 5]) -> None:
+    """通过预签名URL下载文件 (无需SDK), 失败时自动重试
+
+    Args:
+        url: 预签名URL
+        local_path: 本地文件路径
+        retry_intervals: 重试间隔列表，默认 [1, 3, 5] 表示失败后间隔1秒、3秒、5秒重试
+
+    Raises:
+        Exception: 重试多次后仍然失败，抛出包含错误信息的异常
+    """
+    last_error = None
+
+    for attempt, interval in enumerate(retry_intervals + [None], 1):
+        error_msg = await download_from_url(url, local_path)
+        if not error_msg:
+            logger.info(f"下载成功 (尝试 {attempt})")
+            return
+
+        last_error = error_msg
+        logger.warning(f"下载失败 (尝试 {attempt}): {error_msg}")
+
+        # 下载失败，等待后重试
+        if interval is not None:
+            logger.warning(f"{interval}秒后重试...")
+            await asyncio.sleep(interval)
+
+    # 三次重试后仍然失败，抛出异常
+    raise Exception(f"从预签名URL下载文件失败（已重试{len(retry_intervals)}次）: {last_error}")
 
 
 async def upload_to_url(local_path: str, upload_url: str) -> bool:
@@ -121,8 +162,7 @@ async def upload_to_url(local_path: str, upload_url: str) -> bool:
                     return False
     except Exception as e:
         logger.error(f"上传失败: {e}")
-        import traceback
-        logger.debug(traceback.format_exc())
+        logger.error(f"上传异常详情: {traceback.format_exc()}")
         return False
 
 
@@ -153,8 +193,7 @@ async def run_inference_task(task_id: str, preset_name: str,
         file_ext = os.path.splitext(download_url.split('?')[0])[1] if "." in download_url.split('?')[0] else ".mp3"
         local_input_file = os.path.join(task_input_dir, f"input{file_ext}")
 
-        if not await download_from_url(download_url, local_input_file):
-            raise Exception(f"从预签名URL下载文件失败: {download_url}")
+        await download_from_url_with_retry(download_url, local_input_file)
 
         # 2. 执行音频分离推理
         if not os.path.exists(preset_path):
