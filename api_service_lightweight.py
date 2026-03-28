@@ -123,7 +123,11 @@ async def download_from_url_with_retry(url: str, local_path: str, retry_interval
 
 
 async def upload_to_url(local_path: str, upload_url: str) -> bool:
-    """上传文件到预签名URL (无需SDK)"""
+    """上传文件到预签名URL (无需SDK)
+
+    Returns:
+        成功返回 True，失败返回 False
+    """
     try:
         logger.info(f"上传到URL: {local_path} -> {upload_url}")
 
@@ -165,6 +169,38 @@ async def upload_to_url(local_path: str, upload_url: str) -> bool:
         logger.error(f"上传失败: {e}")
         logger.error(f"上传异常详情: {traceback.format_exc()}")
         return False
+
+
+async def upload_to_url_with_retry(local_path: str, upload_url: str, retry_intervals: list = [1, 3, 5]) -> None:
+    """上传文件到预签名URL (无需SDK), 失败时自动重试
+
+    Args:
+        local_path: 本地文件路径
+        upload_url: 预签名URL
+        retry_intervals: 重试间隔列表，默认 [1, 3, 5] 表示失败后间隔1秒、3秒、5秒重试
+
+    Raises:
+        Exception: 重试多次后仍然失败，抛出包含错误信息的异常
+    """
+    filename = os.path.basename(local_path)
+    last_error = None
+
+    for attempt, interval in enumerate(retry_intervals + [None], 1):
+        success = await upload_to_url(local_path, upload_url)
+        if success:
+            logger.info(f"上传成功 {filename} (尝试 {attempt})")
+            return
+
+        last_error = f"上传失败 (尝试 {attempt})"
+        logger.warning(f"{last_error}: {filename}")
+
+        # 上传失败，等待后重试
+        if interval is not None:
+            logger.warning(f"{interval}秒后重试...")
+            await asyncio.sleep(interval)
+
+    # 三次重试后仍然失败，抛出异常
+    raise Exception(f"上传文件到预签名URL失败（已重试{len(retry_intervals)}次）: {filename}")
 
 
 async def run_inference_task(task_id: str, preset_name: str,
@@ -221,12 +257,9 @@ async def run_inference_task(task_id: str, preset_name: str,
                     upload_url = upload_urls.get(file)
 
                     if upload_url:
-                        # 上传到预签名URL
-                        if await upload_to_url(local_path, upload_url):
-                            uploaded_files.append(file)
-                            logger.info(f"上传成功: {file}")
-                        else:
-                            logger.error(f"上传失败: {file}")
+                        # 上传到预签名URL（带重试机制）
+                        await upload_to_url_with_retry(local_path, upload_url)
+                        uploaded_files.append(file)
                     else:
                         logger.warning(f"未找到文件 {file} 的上传URL")
 
