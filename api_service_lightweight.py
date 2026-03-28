@@ -287,7 +287,7 @@ async def run_inference_task(task_id: str, preset_name: str,
             logger.info(f"任务 {task_id}: 发送回调到 {callback_url}")
 
             async with aiohttp.ClientSession() as session:
-                async with session.post(callback_url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                async with session.post(callback_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     if response.status == 200:
                         logger.info(f"回调成功")
                     else:
