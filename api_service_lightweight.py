@@ -16,6 +16,9 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
+# 设置 CUDA_LAUNCH_BLOCKING=1，使 CUDA 错误同步报告，方便调试定位
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
 # 添加项目根目录到 Python 路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
@@ -30,6 +33,9 @@ from inference.preset_infer import PresetInfer
 # 初始化日志和应用
 logger = get_logger()
 app = FastAPI(title="MSST Audio Processing API - Lightweight")
+
+# GPU 推理并发锁，确保同一时间只有一个推理任务在 GPU 上运行
+gpu_inference_lock = asyncio.Lock()
 
 # 目录配置
 INPUT_DIR = "input"
@@ -239,9 +245,12 @@ async def run_inference_task(task_id: str, preset_name: str,
         logger.info(f"任务 {task_id}: 加载Preset配置: {preset_path}")
         preset_data = load_configs(preset_path)
 
-        engine = PresetInfer(preset_data, force_cpu=False, logger=logger)
-        logger.info(f"任务 {task_id}: 开始推理...")
-        engine.process_folder(task_input_dir, task_output_dir, "wav", extra_output=True)
+        async with gpu_inference_lock:
+            logger.info(f"任务 {task_id}: 获取GPU锁，开始推理...")
+            engine = PresetInfer(preset_data, force_cpu=False, logger=logger)
+            logger.info(f"任务 {task_id}: 模型加载完成，执行分离...")
+            await asyncio.to_thread(engine.process_folder, task_input_dir, task_output_dir, "wav", True)
+            logger.info(f"任务 {task_id}: 推理完成，释放GPU锁")
 
         # 3. 扫描结果文件并上传到预签名URL
         search_dir = os.path.join(task_output_dir, "extra_output")
