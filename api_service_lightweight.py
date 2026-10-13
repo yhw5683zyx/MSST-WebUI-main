@@ -30,13 +30,6 @@ from utils.constant import PRESETS
 from webui.utils import load_configs
 from inference.preset_infer import PresetInfer
 
-# 初始化日志和应用
-logger = get_logger()
-app = FastAPI(title="MSST Audio Processing API - Lightweight")
-
-# GPU 推理并发锁，确保同一时间只有一个推理任务在 GPU 上运行
-gpu_inference_lock = asyncio.Lock()
-
 # 目录配置
 INPUT_DIR = "input"
 RESULTS_DIR = "results"
@@ -49,6 +42,14 @@ os.makedirs(LOGS_DIR, exist_ok=True)
 # 日志清理配置
 LOG_RETENTION_DAYS = 7  # 保留7天的日志
 LOG_CLEANUP_INTERVAL = 3600  # 每小时检查一次（秒）
+
+
+# 初始化日志和应用 (get_logger 已支持按天滚动切割, 见 utils/logger.py)
+logger = get_logger()
+app = FastAPI(title="MSST Audio Processing API - Lightweight")
+
+# GPU 推理并发锁，确保同一时间只有一个推理任务在 GPU 上运行
+gpu_inference_lock = asyncio.Lock()
 
 
 class ProcessRequest(BaseModel):
